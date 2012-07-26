@@ -23,6 +23,7 @@
 #include "vtkInformation.h"
 #include "vtkInformationVector.h"
 #include "vtkMultiThreader.h"
+#include "vtkMutexLock.h"
 #include "vtkObjectFactory.h"
 #include "vtkPointData.h"
 #include "vtkRectilinearGrid.h"
@@ -33,7 +34,6 @@
 
 #include <math.h>
 
-vtkCxxRevisionMacro(vtkPartialVolumeModeller, "1.0");
 vtkStandardNewMacro(vtkPartialVolumeModeller);
 
 struct vtkPartialVolumeModellerThreadInfo
@@ -66,6 +66,7 @@ vtkPartialVolumeModeller::vtkPartialVolumeModeller()
 
   this->Threader        = vtkMultiThreader::New();
   this->NumberOfThreads = this->Threader->GetNumberOfThreads();
+  this->ProgressMutex   = vtkSimpleMutexLock::New();
 }
 
 //----------------------------------------------------------------------------
@@ -74,6 +75,11 @@ vtkPartialVolumeModeller::~vtkPartialVolumeModeller()
   if (this->Threader)
     {
     this->Threader->Delete();
+    }
+
+  if (this->ProgressMutex)
+    {
+    this->ProgressMutex->Delete();
     }
 }
 
@@ -140,7 +146,7 @@ int vtkPartialVolumeModeller::RequestInformation (
 }
 
 //----------------------------------------------------------------------------
-static VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller_ThreadedExecute( void *arg )
+VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller::ThreadedExecute( void *arg )
 {
   int threadId = ((vtkMultiThreader::ThreadInfo *)(arg))->ThreadID;
   int threadCount = ((vtkMultiThreader::ThreadInfo *)(arg))->NumberOfThreads;
@@ -230,7 +236,11 @@ static VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller_ThreadedExecute( void *ar
   // Traverse all voxels, computing partial volume intersecton on all points.
   //
   int jkFactor = sampleDimensions[0]*sampleDimensions[1];
+  double threadTotalVoxels = static_cast< double >( (slabMax - slabMin + 1) * jkFactor );
+  int numThreads = userData->Modeller->Threader->GetNumberOfThreads();
+  double voxelProgressWeight = 1.0 / threadTotalVoxels;
   double voxelPoint[3];
+  int count = 0;
   for (int k = slabMin; k <= slabMax; k++)
     {
     voxelPoint[2] = static_cast<double>(k)*spacing[2] + origin[2];
@@ -314,9 +324,20 @@ static VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller_ThreadedExecute( void *ar
 
         int idx = jkFactor*k + sampleDimensions[0]*j + i;
         newScalars->SetComponent(idx, 0, volume / fullVoxelVolume);
+
+        if (count == 50)
+          {
+          userData->Modeller->UpdateThreadProgress(voxelProgressWeight*count);
+          count = 0;
+          }
+        ++count;
         }
       }
     }
+
+  // Report the remnants
+  userData->Modeller->UpdateThreadProgress(voxelProgressWeight*count);
+
   clipper->Delete();
   surfaceFilter->Delete();
   locator->Delete();
@@ -392,8 +413,18 @@ int vtkPartialVolumeModeller::RequestData(
 
   // Set the number of threads to use,
   // then set the execution method and do it.
-  this->Threader->SetNumberOfThreads( this->NumberOfThreads );
-  this->Threader->SetSingleMethod( vtkPartialVolumeModeller_ThreadedExecute,
+  // If the number of threads is greater than the image dimension
+  // along the splitting axis (z), reduce the number of threads so
+  // that each one gets a single-layer slab
+  if ( this->NumberOfThreads > this->SampleDimensions[2] )
+    {
+    this->Threader->SetNumberOfThreads( this->SampleDimensions[2] );
+    }
+  else
+    {
+    this->Threader->SetNumberOfThreads( this->NumberOfThreads );
+    }
+  this->Threader->SetSingleMethod( vtkPartialVolumeModeller::ThreadedExecute,
     (void *)&info);
   this->Threader->SingleMethodExecute();
 
@@ -410,7 +441,7 @@ int vtkPartialVolumeModeller::RequestData(
 //----------------------------------------------------------------------------
 // Compute the ModelBounds based on the input geometry.
 double vtkPartialVolumeModeller::ComputeModelBounds(double origin[3],
-                                            double spacing[3])
+                                                    double spacing[3])
 {
   double *bounds, maxDist;
   int i, adjustBounds=0;
@@ -517,6 +548,22 @@ int vtkPartialVolumeModeller::FillInputPortInformation(
 {
   info->Set(vtkAlgorithm::INPUT_REQUIRED_DATA_TYPE(), "vtkDataSet");
   return 1;
+}
+
+//----------------------------------------------------------------------------
+void vtkPartialVolumeModeller::UpdateThreadProgress(double threadProgress)
+{
+  this->ProgressMutex->Lock();
+
+  double filterProgress = this->GetProgress();
+
+  // This doesn't exactly represent the fraction of work contributed
+  // by the thread to the total problem, but it's good enough.
+  filterProgress += threadProgress / static_cast<double>(this->Threader->GetNumberOfThreads());
+
+  this->UpdateProgress(filterProgress);
+
+  this->ProgressMutex->Unlock();
 }
 
 //----------------------------------------------------------------------------
