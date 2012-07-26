@@ -104,6 +104,9 @@ int main(int argc, char* argv[])
   int imageDimsY = static_cast<int>((ymax - ymin) / spacing) + 1;
   int imageDimsZ = static_cast<int>((zmax - zmin) / spacing) + 1;
 
+  std::cout << "Creating image of dimensions (" << imageDimsX << ", " << imageDimsY << ", "
+            << imageDimsZ << ")" << std::endl;
+
   // Try out the vtkPartialVolumeModeller
   vtkPartialVolumeModeller *partialVolumeModeller = vtkPartialVolumeModeller::New();
   partialVolumeModeller->SetModelBounds(xmin, xmax, ymin, ymax, zmin, zmax);
