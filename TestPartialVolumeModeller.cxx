@@ -43,11 +43,6 @@ public:
     double progress = *(static_cast<double*>(callData));
     fprintf(stderr, "\rFilter progress: %5.1f\n", 100.0 * progress);
     std::cerr.flush();
-    vtkPartialVolumeModeller * modeller = dynamic_cast<vtkPartialVolumeModeller*>( caller );
-    if ( modeller )
-      {
-      //std::cout << "Progress: " << 100.0 * modeller->GetProgress() << std::endl;
-      }
   }
 };
 
