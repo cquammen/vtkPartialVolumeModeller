@@ -15,6 +15,7 @@
 
 #include <iostream>
 
+#include <vtkCommand.h>
 #include <vtkDoubleArray.h>
 #include <vtkImageData.h>
 #include <vtkImageShiftScale.h>
@@ -29,6 +30,26 @@
 #include <vtkXMLUnstructuredGridWriter.h>
 
 #include "vtkPartialVolumeModeller.h"
+
+
+class vtkProgressCommand : public vtkCommand
+{
+public:
+  static vtkProgressCommand *New(){
+    return new vtkProgressCommand;
+  }
+
+  virtual void Execute(vtkObject *caller, unsigned long, void *callData){
+    double progress = *(static_cast<double*>(callData));
+    fprintf(stderr, "\rFilter progress: %5.1f\n", 100.0 * progress);
+    std::cerr.flush();
+    vtkPartialVolumeModeller * modeller = dynamic_cast<vtkPartialVolumeModeller*>( caller );
+    if ( modeller )
+      {
+      //std::cout << "Progress: " << 100.0 * modeller->GetProgress() << std::endl;
+      }
+  }
+};
 
 
 int main(int argc, char* argv[])
@@ -107,12 +128,16 @@ int main(int argc, char* argv[])
   std::cout << "Creating image of dimensions (" << imageDimsX << ", " << imageDimsY << ", "
             << imageDimsZ << ")" << std::endl;
 
+  vtkProgressCommand * pobserver = vtkProgressCommand::New();
+
   // Try out the vtkPartialVolumeModeller
   vtkPartialVolumeModeller *partialVolumeModeller = vtkPartialVolumeModeller::New();
   partialVolumeModeller->SetModelBounds(xmin, xmax, ymin, ymax, zmin, zmax);
   partialVolumeModeller->SetSampleDimensions(imageDimsX, imageDimsY, imageDimsZ);
   partialVolumeModeller->SetInput(grid);
+  partialVolumeModeller->AddObserver(vtkCommand::ProgressEvent, pobserver);
   partialVolumeModeller->Update();
+  pobserver->Delete();
 
   // Check out the results at the side edge of the box. Should be 0.25.
   double edgeValue = partialVolumeModeller->GetOutput()->
@@ -134,7 +159,6 @@ int main(int argc, char* argv[])
     return EXIT_FAILURE;
     }
 
-#if 0
   vtkXMLImageDataWriter* imageWriter = vtkXMLImageDataWriter::New();
   imageWriter->SetFileName("PartialVolumeImageData.vti");
   imageWriter->SetInputConnection(partialVolumeModeller->GetOutputPort());
@@ -160,6 +184,7 @@ int main(int argc, char* argv[])
   voxelModeller->SetSampleDimensions(imageDimsX, imageDimsY, imageDimsZ);
   voxelModeller->SetScalarTypeToFloat();
   voxelModeller->SetInput(grid);
+  voxelModeller->Update();
 
   imageWriter->SetFileName("VoxelModellerImageData.vti");
   imageWriter->SetInputConnection(partialVolumeModeller->GetOutputPort());
@@ -174,7 +199,6 @@ int main(int argc, char* argv[])
   imageWriter->Delete();
   shiftScale->Delete();
   voxelModeller->Delete();
-#endif
 
   partialVolumeModeller->Delete();
 
