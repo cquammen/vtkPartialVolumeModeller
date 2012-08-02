@@ -28,7 +28,7 @@
 #include "vtkImageAlgorithm.h"
 
 class vtkMultiThreader;
-class vtkSimpleMutexLock;
+class vtkSimpleCriticalSection;
 
 class VTK_ABI_EXPORT vtkPartialVolumeModeller : public vtkImageAlgorithm
 {
@@ -112,14 +112,17 @@ protected:
 
   static VTK_THREAD_RETURN_TYPE ThreadedExecute( void *arg );
 
-  vtkMultiThreader   *Threader;
-  int                 NumberOfThreads;
-  vtkSimpleMutexLock *ProgressMutex;
+  vtkMultiThreader         *Threader;
+  int                       NumberOfThreads;
+  vtkSimpleCriticalSection *ProgressMutex;
 
   int    SampleDimensions[3];
   double MaximumDistance;
   double ModelBounds[6];
   int    OutputScalarType;
+
+  // Keeps track of the total progress of the filter
+  double TotalProgress;
 
 private:
   vtkPartialVolumeModeller(const vtkPartialVolumeModeller&); // Not implemented

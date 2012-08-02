@@ -17,13 +17,13 @@
 #include "vtkBoxClipDataSet.h"
 #include "vtkCell.h"
 #include "vtkCellLocator.h"
+#include "vtkCriticalSection.h"
 #include "vtkDataSetSurfaceFilter.h"
 #include "vtkGenericCell.h"
 #include "vtkImageData.h"
 #include "vtkInformation.h"
 #include "vtkInformationVector.h"
 #include "vtkMultiThreader.h"
-#include "vtkMutexLock.h"
 #include "vtkObjectFactory.h"
 #include "vtkPointData.h"
 #include "vtkRectilinearGrid.h"
@@ -66,7 +66,7 @@ vtkPartialVolumeModeller::vtkPartialVolumeModeller()
 
   this->Threader        = vtkMultiThreader::New();
   this->NumberOfThreads = this->Threader->GetNumberOfThreads();
-  this->ProgressMutex   = vtkSimpleMutexLock::New();
+  this->ProgressMutex = vtkSimpleCriticalSection::New();
 }
 
 //----------------------------------------------------------------------------
@@ -329,6 +329,11 @@ VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller::ThreadedExecute( void *arg )
           {
           userData->Modeller->UpdateThreadProgress(voxelProgressWeight*count);
           count = 0;
+
+          if (threadId == 0)
+            {
+            userData->Modeller->UpdateProgress( userData->Modeller->TotalProgress );
+            }
           }
         ++count;
         }
@@ -337,6 +342,10 @@ VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller::ThreadedExecute( void *arg )
 
   // Report the remnants
   userData->Modeller->UpdateThreadProgress(voxelProgressWeight*count);
+  if (threadId == 0)
+    {
+    userData->Modeller->UpdateProgress( userData->Modeller->TotalProgress );
+    }
 
   clipper->Delete();
   surfaceFilter->Delete();
@@ -426,6 +435,7 @@ int vtkPartialVolumeModeller::RequestData(
     }
   this->Threader->SetSingleMethod( vtkPartialVolumeModeller::ThreadedExecute,
     (void *)&info);
+  this->TotalProgress = 0.0;
   this->Threader->SingleMethodExecute();
 
   // Clean up.
@@ -555,13 +565,9 @@ void vtkPartialVolumeModeller::UpdateThreadProgress(double threadProgress)
 {
   this->ProgressMutex->Lock();
 
-  double filterProgress = this->GetProgress();
-
   // This doesn't exactly represent the fraction of work contributed
   // by the thread to the total problem, but it's good enough.
-  filterProgress += threadProgress / static_cast<double>(this->Threader->GetNumberOfThreads());
-
-  this->UpdateProgress(filterProgress);
+  this->TotalProgress += threadProgress / static_cast<double>(this->Threader->GetNumberOfThreads());
 
   this->ProgressMutex->Unlock();
 }
