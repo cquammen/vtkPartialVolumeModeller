@@ -120,11 +120,6 @@ int vtkPartialVolumeModeller::RequestInformation (
   int i;
   double ar[3], origin[3];
 
-  outInfo->Set(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT(),
-               0, this->SampleDimensions[0]-1,
-               0, this->SampleDimensions[1]-1,
-               0, this->SampleDimensions[2]-1);
-
   for (i=0; i < 3; i++)
     {
     origin[i] = this->ModelBounds[2*i];
@@ -140,6 +135,10 @@ int vtkPartialVolumeModeller::RequestInformation (
     }
   outInfo->Set(vtkDataObject::ORIGIN(),origin,3);
   outInfo->Set(vtkDataObject::SPACING(),ar,3);
+  outInfo->Set(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT(),
+               0, this->SampleDimensions[0] - 1,
+               0, this->SampleDimensions[1] - 1,
+               0, this->SampleDimensions[2] - 1);
 
   vtkDataObject::SetPointDataActiveScalarInfo(outInfo, this->OutputScalarType, 1);
   return 1;
@@ -157,7 +156,7 @@ VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller::ThreadedExecute( void *arg )
 
   // Extract the grid boundaries
   vtkDataSetSurfaceFilter *surfaceFilter = vtkDataSetSurfaceFilter::New();
-  surfaceFilter->SetInput(input);
+  surfaceFilter->SetInputData(input);
   surfaceFilter->Update();
 
   // Set up a locator
@@ -226,7 +225,7 @@ VTK_THREAD_RETURN_TYPE vtkPartialVolumeModeller::ThreadedExecute( void *arg )
 
   // Set up the box clipping filter
   vtkBoxClipDataSet *clipper = vtkBoxClipDataSet::New();
-  clipper->SetInput(input);
+  clipper->SetInputData(input);
   clipper->SetOrientation(0);
 
   // Compute the volume of a filled voxel.
@@ -386,8 +385,14 @@ int vtkPartialVolumeModeller::RequestData(
 
   // We need to allocate our own scalars since we are overriding
   // the superclasses "Execute()" method.
-  output->SetExtent(output->GetWholeExtent());
-  output->AllocateScalars();
+  output->SetExtent(
+    outInfo->Get(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT()));
+  int numTuples = 1;
+  for ( int i = 0; i < 3; ++i )
+    {
+    numTuples *= ( output->GetExtent()[2*i+1] - output->GetExtent()[2*i] + 1 );
+    }
+  output->AllocateScalars(this->OutputScalarType, numTuples);
 
   double origin[3], spacing[3];
   double maxDistance = this->ComputeModelBounds(origin, spacing);
@@ -395,6 +400,19 @@ int vtkPartialVolumeModeller::RequestData(
 
   vtkPartialVolumeModellerThreadInfo info;
   info.Modeller = this;
+
+  // Set the number of threads to use, then set the execution method
+  // and do it.  If the number of threads is greater than the image
+  // dimension along the splitting axis (z), reduce the number of
+  // threads so that each one gets a single-layer slab
+  if ( this->NumberOfThreads > this->SampleDimensions[2] )
+    {
+    this->Threader->SetNumberOfThreads( this->SampleDimensions[2] );
+    }
+  else
+    {
+    this->Threader->SetNumberOfThreads( this->NumberOfThreads );
+    }
 
   // Deep copy the data set to avoid a race condition. We could also
   // split the mesh into slabs to reduce the amount of work each thread
@@ -420,19 +438,6 @@ int vtkPartialVolumeModeller::RequestData(
     info.Input[threadId]->DeepCopy(input);
     }
 
-  // Set the number of threads to use,
-  // then set the execution method and do it.
-  // If the number of threads is greater than the image dimension
-  // along the splitting axis (z), reduce the number of threads so
-  // that each one gets a single-layer slab
-  if ( this->NumberOfThreads > this->SampleDimensions[2] )
-    {
-    this->Threader->SetNumberOfThreads( this->SampleDimensions[2] );
-    }
-  else
-    {
-    this->Threader->SetNumberOfThreads( this->NumberOfThreads );
-    }
   this->Threader->SetSingleMethod( vtkPartialVolumeModeller::ThreadedExecute,
     (void *)&info);
   this->TotalProgress = 0.0;
